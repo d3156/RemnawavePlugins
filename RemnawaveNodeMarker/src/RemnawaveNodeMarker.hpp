@@ -31,7 +31,7 @@ class RemnawaveNodeMarker final : public d3156::PluginCore::IPlugin
 
     std::vector<Host> hosts;
 
-    std::string configPath = "RemnawaveNodeMarker.json";
+    std::string configPath = "./configs/RemnawaveNodeMarker.json";
     size_t interval        = 1;  // # Период проверки состояния нод в секундах
     std::string host       = ""; // # Домен панели Remnawave
     std::string token      = ""; // # Токен из настроек панели Remnawave
@@ -52,9 +52,11 @@ public:
     void postInit() override;
     void runIO();
     net::awaitable<void> loadNodesInfo();
-    net::awaitable<void> timer_check_hosts(const boost::system::error_code &ec);
+    net::awaitable<void> timer_check_hosts();
     void parseSettings();
-    std::string resolve_hostname(std::string hostname);
+    net::awaitable<std::string> resolve_hostname(std::string hostname);
+
+    void runTimer();
 
     virtual ~RemnawaveNodeMarker();
 };

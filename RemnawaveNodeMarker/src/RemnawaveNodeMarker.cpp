@@ -2,6 +2,7 @@
 #include <Logger/Log.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/thread/thread.hpp>
@@ -20,6 +21,7 @@ void RemnawaveNodeMarker::registerArgs(d3156::Args::Builder &bldr)
 void RemnawaveNodeMarker::registerModels(d3156::PluginCore::ModelsStorage &models)
 {
     node_model = models.registerModel<PingNodeModel>();
+    parseSettings();
 }
 
 void RemnawaveNodeMarker::postInit()
@@ -64,7 +66,7 @@ void RemnawaveNodeMarker::parseSettings()
 
 std::string RemnawaveNodeMarker::Host::genPatch()
 {
-    return boost::json::serialize(json::value{{"uuid", uuid}, {"remark", base_name + std::string(state)}});
+    return boost::json::serialize(json::value{{"uuid", uuid}, {"remark",base_name +  std::string(state)}});
 }
 
 net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
@@ -79,19 +81,15 @@ net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
             Host new_host;
             new_host.uuid      = json::value_to<std::string>(obj.at("uuid"));
             new_host.base_name = json::value_to<std::string>(obj.at("remark"));
-            auto nodes_it      = obj.find("nodes");
-            if (nodes_it != obj.end() && nodes_it->value().is_array()) {
-                auto &nodes = nodes_it->value().get_array();
-                if (!nodes.empty()) new_host.uuid_node = json::value_to<std::string>(nodes[0]);
-            }
+            new_host.uuid_node = json::value_to<std::string>(obj.at("inbound").as_object().at("configProfileUuid"));
             if (new_host.uuid_node.empty()) new_host.state = HostStates::EMPTY_NODES;
             new_host.removeEmojis();
             hosts.push_back(new_host);
             G_LOG(1, "Added node " << new_host.uuid_node << ":" << new_host.base_name);
         }
 
-        check_hosts_timer_.expires_after(std::chrono::seconds(interval));
-        check_hosts_timer_.async_wait(std::bind(&RemnawaveNodeMarker::timer_check_hosts, this, std::placeholders::_1));
+        runTimer();
+        G_LOG(10, "Start timer_check_hosts with interval " << interval << " sec");
         co_return;
     } catch (const std::exception &e) {
         R_LOG(0, "Error loadNodesInfo: " << e.what());
@@ -106,8 +104,10 @@ void RemnawaveNodeMarker::runIO()
 {
     prctl(PR_SET_NAME, "MetricsModel", 0, 0, 0);
     client = std::make_unique<d3156::AsyncHttpClient>(io, host, cookie, "Bearer " + token);
+    client->setContentType("application/json");
     net::co_spawn(io, loadNodesInfo(), net::detached);
     io.run();
+    G_LOG(1, "Io-context canceled");
 }
 
 RemnawaveNodeMarker::~RemnawaveNodeMarker()
@@ -141,51 +141,66 @@ void RemnawaveNodeMarker::Host::removeEmojis()
     boost::algorithm::replace_all(base_name, HostStates::NODE_AVAILABLE, "");
 }
 
-net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts(const boost::system::error_code &ec)
+net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
 {
-    if (ec == boost::asio::error::operation_aborted || stopToken) co_return;
-    if (ec) G_LOG(0, "Timer error: " << ec.message());
+    G_LOG(10, "Start timer_check_hosts: ");
     for (auto &host : hosts) host.state = HostStates::EMPTY_NODES;
+    G_LOG(10, "Hosts state reset to HostStates::EMPTY_NODES");
     auto res = boost::beast::buffers_to_string((co_await client->getAsync("/api/nodes", "")).body().data());
     json::value root;
     try {
         root = json::parse(res);
+        G_LOG(10, "Resp from /api/nodes parsed" << root);
     } catch (std::exception &e) {
         R_LOG(1, "Error parse json responce: " << res << " error: " << e.what());
-        check_hosts_timer_.expires_after(std::chrono::seconds(interval));
-        check_hosts_timer_.async_wait(std::bind(&RemnawaveNodeMarker::timer_check_hosts, this, std::placeholders::_1));
+        runTimer();
         co_return;
     }
     for (const auto &node : root.at("response").as_array()) {
-        const auto &obj     = node.as_object();
-        std::string uuid    = json::value_to<std::string>(obj.at("uuid"));
+        const auto &obj = node.as_object();
+        std::string uuid =
+            json::value_to<std::string>(obj.at("configProfile").as_object().at("activeConfigProfileUuid"));
         std::string address = json::value_to<std::string>(obj.at("address"));
         bool isConnected    = obj.at("isConnected").as_bool();
-        auto host           = std::ranges::find_if(hosts, [&](auto &host) { return host.uuid == uuid; });
-        if (host == hosts.end()) continue;
-        host->state = isConnected ? HostStates::NODE_AVAILABLE : HostStates::XRAY_ERROR;
-        if (isConnected) continue;
-        if (host->node == nullptr) {
-            auto node_ip = resolve_hostname(address);
-            G_LOG(50, "Resolving " << address << " → " << node_ip);
-            auto node = std::ranges::find_if(node_model->get_nodes(), [&](auto &node) { return node_ip == node->ip; });
-            if (node != node_model->get_nodes().end()) host->node = node->get();
-        }
-        if (host->node && !host->node->available) host->state = HostStates::NODE_UNAVAILABLE;
+        for (auto &host : hosts)
+            if (host.uuid_node == uuid) {
+                host.state = isConnected ? HostStates::NODE_AVAILABLE : HostStates::XRAY_ERROR;
+                if (isConnected) continue;
+                if (host.node == nullptr) {
+                    auto node_ip = co_await resolve_hostname(address);
+                    G_LOG(50, "Resolving " << address << " → " << node_ip);
+                    auto node =
+                        std::ranges::find_if(node_model->get_nodes(), [&](auto &node) { return node_ip == node->ip; });
+                    if (node != node_model->get_nodes().end()) host.node = node->get();
+                }
+                if (host.node && !host.node->available) host.state = HostStates::NODE_UNAVAILABLE;
+            }
     }
-    for (auto &host : hosts) G_LOG(100, co_await client->patchAsync("/api/hosts", host.genPatch()));
-    check_hosts_timer_.expires_after(std::chrono::seconds(interval));
-    check_hosts_timer_.async_wait(std::bind(&RemnawaveNodeMarker::timer_check_hosts, this, std::placeholders::_1));
+    for (auto &host : hosts) co_await client->patchAsync("/api/hosts", host.genPatch());
+    runTimer();
     co_return;
 }
-
-std::string RemnawaveNodeMarker::resolve_hostname(std::string hostname)
+net::awaitable<std::string> RemnawaveNodeMarker::resolve_hostname(std::string hostname)
 {
-    boost::asio::ip::tcp::resolver resolver(io);
+    boost::asio::ip::tcp::resolver resolver(co_await net::this_coro::executor);
     try {
-        return resolver.resolve(hostname, "")->endpoint().address().to_string();
+        co_return (co_await resolver.async_resolve(hostname, "", net::use_awaitable))->endpoint().address().to_string();
     } catch (std::exception &e) {
         R_LOG(1, "Error in resolve hostname: " << hostname << " error: " << e.what());
-        return "";
+        co_return "";
     }
+}
+
+void RemnawaveNodeMarker::runTimer()
+{
+    check_hosts_timer_.expires_after(std::chrono::seconds(interval));
+    check_hosts_timer_.async_wait([this](const boost::system::error_code &ec) {
+        G_LOG(1, "Try timer_check_hosts");
+        if (ec == boost::asio::error::operation_aborted || stopToken) {
+            G_LOG(1, "timer_check_hosts operation_aborted!");
+            return;
+        }
+        if (ec) G_LOG(0, "Timer error: " << ec.message());
+        net::co_spawn(io, timer_check_hosts(), net::detached);
+    });
 }
