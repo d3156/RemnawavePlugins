@@ -2,22 +2,23 @@
 
 Бот обращается к панели с заданным интервалом, получает статусы подключения НОД и переименовывает хосты. Опционально, поддерживает PingNodePlugin (проверка доступности не только тонеля, но хаста в целом).
 
+![](images/statuses.png)
+
 ## Настройка
 
 ### Файл конфигурации
 Файл конфигурации генерируется автоматически плагином при загрузке. После этого нужно донастроить его
 
-Заполните 
+Заполните `RemnawaveNodeMarker.json`
 
 ```json
-REMNAWAVE_INTERVAL=1 # Период проверки состояния нод в секундах
+{
+    "interval": "1",
+    "host": "https://panel.domain.com",
+    "token": "your token",
+    "cookie": "cockie_prop=cockie_val"
+}
 
-REMNAWAVE_HOST=""    # Домен панели Remnawave 
-REMNAWAVE_TOKEN=""   # Токен из настроек панели Remnawave 
-REMNAWAVE_COOKIE=""  # COOKIE из https://{host}/auth/login?{COOKIE}
-
-TELEGRAM_TOKEN=      # Токен бота
-TELEGRAM_CHAT_ID=    # Идентификатор чата
 ``` 
 
 ### Получение API-токена Remnawave
