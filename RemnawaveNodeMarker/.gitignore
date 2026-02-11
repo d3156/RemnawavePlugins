@@ -1,0 +1,8 @@
+build
+build-debug
+.cache
+release
+_CPack_Packages
+*.deb
+*/build
+*/build-debug
