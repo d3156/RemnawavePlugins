@@ -42,7 +42,7 @@
 
 ## Запуск 
 
-Запустить PluginLoader из пакета [PluginCore](https://github.com/d3156/PluginCore)
+Запустить PluginLoader из пакета [PluginCore](https://gitlab.bubki.zip/d3156/PluginCore)
 
 ```bash
 ./PluginLoader
