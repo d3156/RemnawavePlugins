@@ -66,7 +66,7 @@ void RemnawaveNodeMarker::parseSettings()
 
 std::string RemnawaveNodeMarker::Host::genPatch()
 {
-    return boost::json::serialize(json::value{{"uuid", uuid}, {"remark",base_name +  std::string(state)}});
+    return boost::json::serialize(json::value{{"uuid", uuid}, {"remark", base_name + std::string(state)}});
 }
 
 net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
@@ -144,7 +144,8 @@ void RemnawaveNodeMarker::Host::removeEmojis()
 net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
 {
     G_LOG(10, "Start timer_check_hosts: ");
-    for (auto &host : hosts) host.state = HostStates::EMPTY_NODES;
+    auto hosts_local = hosts;
+    for (auto &host : hosts_local) host.state = HostStates::EMPTY_NODES;
     G_LOG(10, "Hosts state reset to HostStates::EMPTY_NODES");
     auto res = boost::beast::buffers_to_string((co_await client->getAsync("/api/nodes", "")).body().data());
     json::value root;
@@ -162,7 +163,7 @@ net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
             json::value_to<std::string>(obj.at("configProfile").as_object().at("activeConfigProfileUuid"));
         std::string address = json::value_to<std::string>(obj.at("address"));
         bool isConnected    = obj.at("isConnected").as_bool();
-        for (auto &host : hosts)
+        for (auto &host : hosts_local)
             if (host.uuid_node == uuid) {
                 host.state = isConnected ? HostStates::NODE_AVAILABLE : HostStates::XRAY_ERROR;
                 if (isConnected) continue;
@@ -176,7 +177,15 @@ net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
                 if (host.node && !host.node->available) host.state = HostStates::NODE_UNAVAILABLE;
             }
     }
-    for (auto &host : hosts) co_await client->patchAsync("/api/hosts", host.genPatch());
+    static size_t spins = 0;
+    if (++spins == 1000) {
+        for (size_t i = 0; i < hosts.size(); i++) co_await client->patchAsync("/api/hosts", hosts_local[i].genPatch());
+        spins = 0;
+    } else
+        for (size_t i = 0; i < hosts.size(); i++)
+            if (hosts_local[i].state != hosts[i].state)
+                co_await client->patchAsync("/api/hosts", hosts_local[i].genPatch());
+    hosts = hosts_local;
     runTimer();
     co_return;
 }
