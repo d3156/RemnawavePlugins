@@ -58,5 +58,6 @@ public:
 
     void runTimer();
 
+    net::awaitable<bool> updateNodesInfo();
     virtual ~RemnawaveNodeMarker();
 };

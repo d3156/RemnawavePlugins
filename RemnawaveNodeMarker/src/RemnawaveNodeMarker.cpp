@@ -72,27 +72,10 @@ std::string RemnawaveNodeMarker::Host::genPatch()
 net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
 {
     if (stopToken) co_return;
-    auto res = co_await client->getAsync("/api/hosts", "");
-    try {
-        json::value root     = json::parse(boost::beast::buffers_to_string(res.body().data()));
-        const auto &response = root.at("response").as_array();
-        for (const auto &host : response) {
-            const auto &obj = host.as_object();
-            Host new_host;
-            new_host.uuid      = json::value_to<std::string>(obj.at("uuid"));
-            new_host.base_name = json::value_to<std::string>(obj.at("remark"));
-            new_host.uuid_node = json::value_to<std::string>(obj.at("inbound").as_object().at("configProfileUuid"));
-            if (new_host.uuid_node.empty()) new_host.state = HostStates::EMPTY_NODES;
-            new_host.removeEmojis();
-            hosts.push_back(new_host);
-            G_LOG(1, "Added node " << new_host.uuid_node << ":" << new_host.base_name);
-        }
-
+    if (co_await updateNodesInfo()) {
         runTimer();
         G_LOG(10, "Start timer_check_hosts with interval " << interval << " sec");
         co_return;
-    } catch (const std::exception &e) {
-        R_LOG(0, "Error loadNodesInfo: " << e.what());
     }
     /// Если не удалось получить список нод - отложим. Попробуем через 15 секунд
     co_await boost::asio::steady_timer(io, std::chrono::milliseconds(15000)).async_wait(net::use_awaitable);
@@ -177,15 +160,16 @@ net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
                 if (host.node && !host.node->available) host.state = HostStates::NODE_UNAVAILABLE;
             }
     }
+    bool need_patch = false;
+    for (size_t i = 0; i < hosts.size(); i++)
+        if (hosts_local[i].state != hosts[i].state) need_patch = true;
+    hosts               = std::move(hosts_local);
     static size_t spins = 0;
-    if (++spins == 1000) {
-        for (size_t i = 0; i < hosts.size(); i++) co_await client->patchAsync("/api/hosts", hosts_local[i].genPatch());
+    if (++spins == 1000 || need_patch) {
         spins = 0;
-    } else
-        for (size_t i = 0; i < hosts.size(); i++)
-            if (hosts_local[i].state != hosts[i].state)
-                co_await client->patchAsync("/api/hosts", hosts_local[i].genPatch());
-    hosts = hosts_local;
+        co_await updateNodesInfo();
+        for (size_t i = 0; i < hosts.size(); i++) co_await client->patchAsync("/api/hosts", hosts[i].genPatch());
+    }
     runTimer();
     co_return;
 }
@@ -212,4 +196,37 @@ void RemnawaveNodeMarker::runTimer()
         if (ec) G_LOG(0, "Timer error: " << ec.message());
         net::co_spawn(io, timer_check_hosts(), net::detached);
     });
+}
+
+net::awaitable<bool> RemnawaveNodeMarker::updateNodesInfo()
+{
+    if (stopToken) co_return false;
+    auto res = co_await client->getAsync("/api/hosts", "");
+    try {
+        json::value root     = json::parse(boost::beast::buffers_to_string(res.body().data()));
+        const auto &response = root.at("response").as_array();
+        for (const auto &host : response) {
+            const auto &obj = host.as_object();
+            Host new_host;
+            new_host.uuid    = json::value_to<std::string>(obj.at("uuid"));
+            auto finded_host = std::ranges::find_if(hosts, [&](auto &host) { return host.uuid == new_host.uuid; });
+            if (finded_host != hosts.end()) {
+                finded_host->base_name = json::value_to<std::string>(obj.at("remark"));
+                finded_host->uuid_node =
+                    json::value_to<std::string>(obj.at("inbound").as_object().at("configProfileUuid"));
+                finded_host->removeEmojis();
+                continue;
+            }
+            new_host.base_name = json::value_to<std::string>(obj.at("remark"));
+            new_host.uuid_node = json::value_to<std::string>(obj.at("inbound").as_object().at("configProfileUuid"));
+            if (new_host.uuid_node.empty()) new_host.state = HostStates::EMPTY_NODES;
+            new_host.removeEmojis();
+            hosts.push_back(new_host);
+            G_LOG(1, "Added node " << new_host.uuid_node << ":" << new_host.base_name);
+        }
+    } catch (const std::exception &e) {
+        R_LOG(0, "Error loadNodesInfo: " << e.what());
+        co_return false;
+    }
+    co_return true;
 }
