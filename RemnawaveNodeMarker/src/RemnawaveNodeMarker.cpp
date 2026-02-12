@@ -85,7 +85,7 @@ net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
 
 void RemnawaveNodeMarker::runIO()
 {
-    prctl(PR_SET_NAME, "MetricsModel", 0, 0, 0);
+    prctl(PR_SET_NAME, "RemnawaveNodeMarker", 0, 0, 0);
     client = std::make_unique<d3156::AsyncHttpClient>(io, host, cookie, "Bearer " + token);
     client->setContentType("application/json");
     net::co_spawn(io, loadNodesInfo(), net::detached);
