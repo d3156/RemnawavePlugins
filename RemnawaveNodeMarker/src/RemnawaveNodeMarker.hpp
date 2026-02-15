@@ -1,5 +1,5 @@
-#include <PluginCore/IModel.hpp>
-#include <PluginCore/IPlugin.hpp>
+#include <PluginCore/IModel>
+#include <PluginCore/IPlugin>
 #include <cstddef>
 #include <memory>
 #include <string>
