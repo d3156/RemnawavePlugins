@@ -3,25 +3,19 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
 #include <boost/thread/thread.hpp>
-#include <filesystem>
 #include <memory>
 #include <sys/prctl.h>
 #include <boost/json.hpp>
 #include <boost/algorithm/string.hpp>
+#include <ConfiguratorModel>
 
-void RemnawaveNodeMarker::registerArgs(d3156::Args::Builder &bldr)
-{
-    bldr.setVersion(FULL_NAME).addOption(configPath, "RemnawaveNodeMarkerPath",
-                                         "path to config for RemnawaveNodeMarker.json");
-}
+void RemnawaveNodeMarker::registerArgs(d3156::Args::Builder &bldr) { bldr.setVersion(FULL_NAME); }
 
 void RemnawaveNodeMarker::registerModels(d3156::PluginCore::ModelsStorage &models)
 {
     node_model = models.registerModel<PingNodeModel>();
-    parseSettings();
+    models.registerModel<ConfiguratorModel>()->registerConfig("RemnawaveNodeMarker", conf);
 }
 
 void RemnawaveNodeMarker::postInit()
@@ -34,35 +28,7 @@ extern "C" d3156::PluginCore::IPlugin *create_plugin() { return new RemnawaveNod
 
 extern "C" void destroy_plugin(d3156::PluginCore::IPlugin *p) { delete p; }
 
-using boost::property_tree::ptree;
 namespace json = boost::json;
-namespace fs   = std::filesystem;
-
-void RemnawaveNodeMarker::parseSettings()
-{
-    if (!fs::exists(configPath)) {
-        Y_LOG(1, "Config file " << configPath << " not found. Creating default config...");
-        fs::create_directories(fs::path(configPath).parent_path());
-        ptree pt;
-        pt.put("interval", interval);
-        pt.put("host", host);
-        pt.put("token", token);
-        pt.put("cookie", cookie);
-        boost::property_tree::write_json(configPath, pt);
-        G_LOG(1, " Default config created at " << configPath);
-        return;
-    }
-    try {
-        ptree pt;
-        read_json(configPath, pt);
-        interval = pt.get("interval", interval);
-        host     = pt.get("host", host);
-        token    = pt.get("token", token);
-        cookie   = pt.get("cookie", cookie);
-    } catch (std::exception e) {
-        R_LOG(1, "error on load config " << configPath << " " << e.what());
-    }
-}
 
 std::string RemnawaveNodeMarker::Host::genPatch()
 {
@@ -74,7 +40,7 @@ net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
     if (stopToken) co_return;
     if (co_await updateNodesInfo()) {
         runTimer();
-        G_LOG(10, "Start timer_check_hosts with interval " << interval << " sec");
+        G_LOG(10, "Start timer_check_hosts with interval " << conf.interval << " sec");
         co_return;
     }
     /// Если не удалось получить список нод - отложим. Попробуем через 15 секунд
@@ -86,7 +52,7 @@ net::awaitable<void> RemnawaveNodeMarker::loadNodesInfo()
 void RemnawaveNodeMarker::runIO()
 {
     prctl(PR_SET_NAME, "RemnawaveNodeMarker", 0, 0, 0);
-    client = std::make_unique<d3156::AsyncHttpClient>(io, host, cookie, "Bearer " + token);
+    client = std::make_unique<d3156::AsyncHttpClient>(io, conf.host, conf.cookie, "Bearer " + conf.token.value);
     client->setContentType("application/json");
     net::co_spawn(io, loadNodesInfo(), net::detached);
     io.run();
@@ -186,7 +152,7 @@ net::awaitable<std::string> RemnawaveNodeMarker::resolve_hostname(std::string ho
 
 void RemnawaveNodeMarker::runTimer()
 {
-    check_hosts_timer_.expires_after(std::chrono::seconds(interval));
+    check_hosts_timer_.expires_after(std::chrono::seconds(conf.interval.value));
     check_hosts_timer_.async_wait([this](const boost::system::error_code &ec) {
         G_LOG(1, "Try timer_check_hosts");
         if (ec == boost::asio::error::operation_aborted || stopToken) {

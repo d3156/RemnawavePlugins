@@ -1,12 +1,9 @@
 #include <PluginCore/IModel>
 #include <PluginCore/IPlugin>
-#include <cstddef>
-#include <memory>
-#include <string>
 #include <EasyHttpLib/AsyncHttpClient>
 #include <boost/thread/thread.hpp>
 #include <PingNodeModel>
-#include <vector>
+#include <BaseConfig>
 
 namespace HostStates
 {
@@ -31,11 +28,13 @@ class RemnawaveNodeMarker final : public d3156::PluginCore::IPlugin
 
     std::vector<Host> hosts;
 
-    std::string configPath = "./configs/RemnawaveNodeMarker.json";
-    size_t interval        = 1;  // # Период проверки состояния нод в секундах
-    std::string host       = ""; // # Домен панели Remnawave
-    std::string token      = ""; // # Токен из настроек панели Remnawave
-    std::string cookie     = ""; // # COOKIE из https://{host}/auth/login?{COOKIE}
+    struct Config : d3156::Config {
+        Config() : d3156::Config("") {}
+        CONFIG_UINT(interval, 1);  // # Период проверки состояния нод в секундах
+        CONFIG_STRING(host, "");   // # Домен панели Remnawave
+        CONFIG_STRING(token, "");  // # Токен из настроек панели Remnawave
+        CONFIG_STRING(cookie, ""); // # COOKIE из https://{host}/auth/login?{COOKIE}
+    } conf;
 
     std::unique_ptr<d3156::AsyncHttpClient> client;
     boost::asio::io_context io;
@@ -53,7 +52,6 @@ public:
     void runIO();
     net::awaitable<void> loadNodesInfo();
     net::awaitable<void> timer_check_hosts();
-    void parseSettings();
     net::awaitable<std::string> resolve_hostname(std::string hostname);
 
     void runTimer();

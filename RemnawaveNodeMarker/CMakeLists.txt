@@ -5,6 +5,7 @@ create_target(plugin)
 
 dependency("../../EasyHttpLib" EasyHttpLib)
 dependency("../../PingNode/PingNodeModel" PingNodeModel)
+dependency("../../PluginConfigurator/ConfiguratorModel" ConfiguratorModel)
 
 find_package(Boost 1.8 REQUIRED COMPONENTS json thread system)
 target_link_libraries(RemnawaveNodeMarker PRIVATE Boost::system Boost::thread Boost::json)
