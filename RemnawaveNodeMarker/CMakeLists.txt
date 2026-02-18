@@ -3,9 +3,9 @@ project(RemnawaveNodeMarker VERSION 1.0.0 LANGUAGES CXX)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/workspace.cmake")
 create_target(plugin)
 
-dependency("../../EasyHttpLib" EasyHttpLib)
-dependency("../../PingNode/PingNodeModel" PingNodeModel)
-dependency("../../PluginConfigurator/ConfiguratorModel" ConfiguratorModel)
+dependency("../.." EasyHttpLib "https://gitlab.bubki.zip/d3156/EasyHttpLib")
+dependency("../.." PingNodeModel "https://gitlab.bubki.zip/d3156/PingNode")
+dependency("../.." ConfiguratorModel "https://gitlab.bubki.zip/d3156/PluginConfigurator")
 
 find_package(Boost 1.8 REQUIRED COMPONENTS json thread system)
 target_link_libraries(RemnawaveNodeMarker PRIVATE Boost::system Boost::thread Boost::json)
