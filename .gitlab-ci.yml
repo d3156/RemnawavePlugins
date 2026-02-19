@@ -1,0 +1,288 @@
+stages:
+  - build
+  - release
+
+variables:
+  BUILD_TYPE: Release
+  RELEASE_DIR: release
+  CCACHE_DIR: $CI_PROJECT_DIR/.ccache
+
+.build_template: &build_template
+  stage: build
+  image: ubuntu:24.04
+  script:
+    - mkdir -p Workspace/PluginsSource/$CI_PROJECT_NAME
+    - mv * Workspace/PluginsSource/$CI_PROJECT_NAME/ || true
+    - mkdir -p Workspace/Plugins
+    - mkdir -p Workspace/PluginsSource
+    - mkdir -p $CI_PROJECT_DIR/$RELEASE_DIR
+    - cd Workspace
+    - git clone https://gitlab.bubki.zip/d3156/PluginCore.git
+    - ln -s ./PluginCore/tools tools
+    - echo "Building for ARCH=$ARCH"
+    - BUILD_DIR="build_$ARCH"
+    - INSTALL_DIR=$(realpath ./core)
+    - PLUGINS_DIR=$(realpath ./Plugins)
+    - cd PluginsSource/$CI_PROJECT_NAME/
+    - rm -rf $BUILD_DIR
+    - rm -rf $INSTALL_DIR
+    - mkdir -p $INSTALL_DIR
+    - |
+      ASSETS=$(curl -L "https://gitlab.bubki.zip/api/v4/projects/d3156%2FPluginCore/releases/permalink/latest" | jq -r --arg ARCH "$ARCH" '.assets.links[] | select(.name | test("_"+$ARCH+"\\.deb$")) | .direct_asset_url')
+      for url in $ASSETS; do
+        echo "Downloading $url"
+        curl -L -o "$INSTALL_DIR/$(basename $url)" "$url"
+      done
+    - ls -la $INSTALL_DIR/
+    - chmod 777 $INSTALL_DIR/* || true
+    - |
+      for deb in "$INSTALL_DIR"/*.deb; do
+        echo "Extracting $deb ..."
+        dpkg-deb -x "$deb" $INSTALL_DIR
+      done
+    - tree .
+    - ls -la $INSTALL_DIR/
+    - |
+      start_dir=$PWD
+      find "$start_dir" -type f -name 'CMakeLists.txt' | while IFS= read -r cmake_file; do
+        proj_dir=$(dirname "$cmake_file")
+        echo "==== Release build: $proj_dir ===="
+        (
+          cd "$proj_dir" || exit 1
+          cmake -S . -B $BUILD_DIR \
+            -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+            -DCPACK_DEBIAN_PACKAGE_ARCHITECTURE=$ARCH \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_PREFIX_PATH=$INSTALL_DIR/usr \
+            $CMAKE_TOOLCHAIN_ARGS
+          cmake --build $BUILD_DIR --verbose -j$(nproc)
+        )
+      done
+    - ls -la $PLUGINS_DIR || true
+    - |
+      find $PLUGINS_DIR -type f | while IFS= read -r file_; do
+        file_name=$(basename "$file_")
+        mv "$file_" "$CI_PROJECT_DIR/$RELEASE_DIR/${file_name}_$ARCH"
+      done
+
+  cache:
+    key: global-build-cache
+    paths:
+      - .ccache/
+      - build_amd64/
+      - build_arm64/
+      - build_armhf/
+      - install_amd64/
+      - install_arm64/
+      - install_armhf/
+
+  artifacts:
+    paths:
+      - $RELEASE_DIR/*
+    expire_in: 1 week
+
+# --- AMD64 ---
+build:amd64:
+  <<: *build_template
+  variables:
+    ARCH: amd64
+    CMAKE_TOOLCHAIN_ARGS: ""
+  before_script:
+    - |
+      cat >/etc/apt/sources.list.d/ubuntu.sources <<'EOF'
+      Types: deb
+      URIs: http://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: http://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+    - apt-get update
+    - apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release tree jq build-essential cmake dpkg-dev ccache wget git
+      libboost-system-dev libboost-filesystem-dev
+      libboost-program-options-dev libboost-thread-dev libboost-chrono-dev
+      libboost-date-time-dev libboost-atomic-dev libboost-json-dev
+      openssl libcap2-bin libssl-dev
+    - export PATH="/usr/lib/ccache:$PATH"
+    - ccache -M 5G
+
+# --- ARM64 ---
+build:arm64:
+  <<: *build_template
+  variables:
+    ARCH: arm64
+    CMAKE_TOOLCHAIN_ARGS: >
+      -DCMAKE_SYSTEM_NAME=Linux
+      -DCMAKE_SYSTEM_PROCESSOR=aarch64
+      -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc-13
+      -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++-13
+  before_script:
+    - |
+      # amd64 repos only (tools, cross-compilers)
+      cat >/etc/apt/sources.list.d/ubuntu.sources <<'EOF'
+      Types: deb
+      URIs: http://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: http://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+
+      # arm64 repos from ports
+      cat >/etc/apt/sources.list.d/ubuntu-ports.sources <<'EOF'
+      Types: deb
+      URIs: http://ports.ubuntu.com/ubuntu-ports/
+      Suites: noble noble-updates noble-backports noble-security
+      Components: main restricted universe multiverse
+      Architectures: arm64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+    - dpkg --add-architecture arm64
+    - apt-get update
+    - apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release tree jq build-essential cmake dpkg-dev ccache wget git
+      gcc-13-aarch64-linux-gnu g++-13-aarch64-linux-gnu qemu-user-static libcap2-bin
+      libboost-system-dev:arm64 libboost-filesystem-dev:arm64 libboost-program-options-dev:arm64
+      libboost-thread-dev:arm64 libboost-chrono-dev:arm64 libboost-date-time-dev:arm64
+      libboost-atomic-dev:arm64 libboost-json-dev:arm64 libboost-regex-dev:arm64
+      libboost-iostreams-dev:arm64 libssl-dev:arm64
+    - export PATH="/usr/lib/ccache:$PATH"
+    - ccache -M 5G
+
+# --- ARMhf / ARMv7 ---
+build:armhf:
+  <<: *build_template
+  variables:
+    ARCH: armhf
+    CMAKE_TOOLCHAIN_ARGS: >
+      -DCMAKE_SYSTEM_NAME=Linux
+      -DCMAKE_SYSTEM_PROCESSOR=arm
+      -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc-12
+      -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++-12
+  before_script:
+    - |
+      # amd64 repos only (tools, cross-compilers)
+      cat >/etc/apt/sources.list.d/ubuntu.sources <<'EOF'
+      Types: deb
+      URIs: http://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: http://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main restricted universe multiverse
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+
+      # armhf repos from ports
+      cat >/etc/apt/sources.list.d/ubuntu-ports.sources <<'EOF'
+      Types: deb
+      URIs: http://ports.ubuntu.com/ubuntu-ports/
+      Suites: noble noble-updates noble-backports noble-security
+      Components: main restricted universe multiverse
+      Architectures: armhf
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+    - dpkg --add-architecture armhf
+    - apt-get update
+    - apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release tree jq build-essential cmake dpkg-dev ccache wget git
+      gcc-12-arm-linux-gnueabihf g++-12-arm-linux-gnueabihf qemu-user-static libcap2-bin
+      libssl-dev:armhf libboost-system-dev:armhf libboost-filesystem-dev:armhf libboost-program-options-dev:armhf
+      libboost-thread-dev:armhf libboost-chrono-dev:armhf libboost-date-time-dev:armhf libboost-atomic-dev:armhf
+      libboost-json-dev:armhf libboost-regex-dev:armhf libboost-iostreams-dev:armhf
+    - export PATH="/usr/lib/ccache:$PATH"
+    - ccache -M 5G
+
+# --- Release ---
+release:gitlab_release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs:
+    - job: build:amd64
+      artifacts: true
+    - job: build:arm64
+      artifacts: true
+    - job: build:armhf
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - test -n "$GLAB_TOKEN" || (echo "GLAB_TOKEN is empty (check GitLab CI/CD variable scope/protected tags)" && exit 1)
+    - tree .
+    - echo "Release assets ready $(ls release/ | wc -l) files"
+    - glab auth login --hostname gitlab.bubki.zip --token "$GLAB_TOKEN"
+    - glab release create "$CI_COMMIT_TAG" --name "Multi-arch Release $CI_COMMIT_TAG" --notes "Release" || true
+    - glab release upload "$CI_COMMIT_TAG" release/*
+  artifacts:
+    paths:
+      - release/*
+    expire_in: never
+
+
+release:github_release:
+  stage: release
+  image: alpine:latest
+  needs:
+    - job: build:amd64
+      artifacts: true
+    - job: build:arm64
+      artifacts: true
+    - job: build:armhf
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  variables:
+    GITHUB_OWNER: d3156
+    APK_CACHE_DIR: $CI_PROJECT_DIR/.cache/apk
+  cache:
+    key: 
+      files:
+        - gh_version.txt
+    paths:
+      - .cache/apk/
+      - /usr/local/bin/gh
+  before_script:
+    - mkdir -p $APK_CACHE_DIR
+    - apk update --cache-dir $APK_CACHE_DIR
+    - apk add --cache-dir $APK_CACHE_DIR --no-cache git curl
+    - |
+      if [ -f /usr/local/bin/gh ] && /usr/local/bin/gh --version; then 
+        echo "gh from cache"; 
+      else
+        GH_VERSION=$(curl -s https://api.github.com/repos/cli/cli/releases/latest | grep tag_name | cut -d '"' -f4 | sed 's/v//')
+        curl -L -o gh.tar.gz https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz
+        tar -xzf gh.tar.gz
+        mv gh_${GH_VERSION}_linux_amd64/bin/gh /usr/local/bin/
+        chmod +x /usr/local/bin/gh
+      fi
+    - gh --version
+  script:
+    - ls -la release/
+    - echo "Release assets ready $(ls release/ | wc -l) files"
+    # github
+    - test -n "$GH_TOKEN" || (echo "GH_TOKEN is empty (check GitLab CI/CD variable scope/protected tags)" && exit 1)
+    - GH_REPO="$GITHUB_OWNER/$CI_PROJECT_NAME"
+    - gh release create "$CI_COMMIT_TAG" release/* --repo "$GH_REPO" --title "Multi-arch Release $CI_COMMIT_TAG" --notes "New Release"
+  artifacts:
+    paths:
+      - release/*
+    expire_in: never
+
