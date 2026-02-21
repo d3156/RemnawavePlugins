@@ -120,8 +120,8 @@ net::awaitable<void> RemnawaveNodeMarker::timer_check_hosts()
                     auto node_ip = co_await resolve_hostname(address);
                     G_LOG(50, "Resolving " << address << " → " << node_ip);
                     auto node =
-                        std::ranges::find_if(node_model->get_nodes(), [&](auto &node) { return node_ip == node->ip; });
-                    if (node != node_model->get_nodes().end()) host.node = node->get();
+                        std::ranges::find_if(node_model->get_nodes(), [&](auto &node) { return node_ip == node.ip.value; });
+                    if (node != node_model->get_nodes().end()) host.node = &*node;
                 }
                 if (host.node && !host.node->available) host.state = HostStates::NODE_UNAVAILABLE;
             }
