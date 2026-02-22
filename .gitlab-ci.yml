@@ -109,7 +109,7 @@ build:amd64:
     - apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release tree jq build-essential cmake dpkg-dev ccache wget git
       libboost-system-dev libboost-filesystem-dev
       libboost-program-options-dev libboost-thread-dev libboost-chrono-dev
-      libboost-date-time-dev libboost-atomic-dev libboost-json-dev
+      libboost-date-time-dev libboost-atomic-dev libboost-json-dev libboost-url-dev
       openssl libcap2-bin libssl-dev
     - export PATH="/usr/lib/ccache:$PATH"
     - ccache -M 5G
@@ -158,7 +158,7 @@ build:arm64:
       gcc-13-aarch64-linux-gnu g++-13-aarch64-linux-gnu qemu-user-static libcap2-bin
       libboost-system-dev:arm64 libboost-filesystem-dev:arm64 libboost-program-options-dev:arm64
       libboost-thread-dev:arm64 libboost-chrono-dev:arm64 libboost-date-time-dev:arm64
-      libboost-atomic-dev:arm64 libboost-json-dev:arm64 libboost-regex-dev:arm64
+      libboost-atomic-dev:arm64 libboost-json-dev:arm64 libboost-regex-dev:arm64 libboost-url-dev:arm64
       libboost-iostreams-dev:arm64 libssl-dev:arm64
     - export PATH="/usr/lib/ccache:$PATH"
     - ccache -M 5G
@@ -207,7 +207,7 @@ build:armhf:
       gcc-12-arm-linux-gnueabihf g++-12-arm-linux-gnueabihf qemu-user-static libcap2-bin
       libssl-dev:armhf libboost-system-dev:armhf libboost-filesystem-dev:armhf libboost-program-options-dev:armhf
       libboost-thread-dev:armhf libboost-chrono-dev:armhf libboost-date-time-dev:armhf libboost-atomic-dev:armhf
-      libboost-json-dev:armhf libboost-regex-dev:armhf libboost-iostreams-dev:armhf
+      libboost-json-dev:armhf libboost-regex-dev:armhf libboost-iostreams-dev:armhf libboost-url-dev:armhf
     - export PATH="/usr/lib/ccache:$PATH"
     - ccache -M 5G
 
